@@ -1,0 +1,369 @@
+import os
+import math
+import warnings
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+
+warnings.filterwarnings('ignore')
+
+# =========================
+# CONFIG
+# =========================
+API_KEY = os.getenv('ALPACA_API_KEY')
+API_SECRET = os.getenv('ALPACA_API_SECRET')
+
+CONFIG = {
+    'UNIVERSE': [
+        'AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NVDA', 'TSLA', 'AMD', 'NFLX', 'ADBE',
+        'CRM', 'ORCL', 'INTC', 'CSCO', 'QCOM', 'AVGO', 'TXN', 'AMAT', 'MU', 'PYPL',
+        'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'BLK', 'SCHW', 'AXP', 'USB',
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO',
+        'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'UNH', 'TMO', 'DHR', 'BMY', 'AMGN',
+        'HD', 'LOW', 'NKE', 'SBUX', 'MCD', 'COST', 'WMT', 'TGT', 'BKNG', 'CMG',
+        'CAT', 'DE', 'GE', 'HON', 'UPS', 'FDX', 'BA', 'LMT', 'RTX', 'UNP'
+    ],
+    'MARKET_ETF': 'SPY',
+    'SECTOR_MAP': {
+        'AAPL': 'XLK', 'MSFT': 'XLK', 'AMZN': 'XLY', 'GOOGL': 'XLK', 'META': 'XLK', 'NVDA': 'XLK', 'TSLA': 'XLY', 'AMD': 'XLK', 'NFLX': 'XLC', 'ADBE': 'XLK',
+        'CRM': 'XLK', 'ORCL': 'XLK', 'INTC': 'XLK', 'CSCO': 'XLK', 'QCOM': 'XLK', 'AVGO': 'XLK', 'TXN': 'XLK', 'AMAT': 'XLK', 'MU': 'XLK', 'PYPL': 'XLF',
+        'JPM': 'XLF', 'BAC': 'XLF', 'WFC': 'XLF', 'GS': 'XLF', 'MS': 'XLF', 'C': 'XLF', 'BLK': 'XLF', 'SCHW': 'XLF', 'AXP': 'XLF', 'USB': 'XLF',
+        'XOM': 'XLE', 'CVX': 'XLE', 'COP': 'XLE', 'SLB': 'XLE', 'EOG': 'XLE', 'MPC': 'XLE', 'PSX': 'XLE', 'VLO': 'XLE',
+        'JNJ': 'XLV', 'PFE': 'XLV', 'MRK': 'XLV', 'ABBV': 'XLV', 'LLY': 'XLV', 'UNH': 'XLV', 'TMO': 'XLV', 'DHR': 'XLV', 'BMY': 'XLV', 'AMGN': 'XLV',
+        'HD': 'XLY', 'LOW': 'XLY', 'NKE': 'XLY', 'SBUX': 'XLY', 'MCD': 'XLY', 'COST': 'XLP', 'WMT': 'XLP', 'TGT': 'XLP', 'BKNG': 'XLY', 'CMG': 'XLY',
+        'CAT': 'XLI', 'DE': 'XLI', 'GE': 'XLI', 'HON': 'XLI', 'UPS': 'XLI', 'FDX': 'XLI', 'BA': 'XLI', 'LMT': 'XLI', 'RTX': 'XLI', 'UNP': 'XLI'
+    },
+    'STYLE_FACTORS': ['IWM', 'MTUM', 'QUAL', 'USMV', 'VLUE'],
+    'TIMEFRAME': TimeFrame.Day,
+    'LOOKBACK_DAYS': 365,
+    'WARMUP_BARS': 80,
+    'REGRESSION_WINDOW': 60,
+    'ZSCORE_WINDOW': 60,
+    'RESIDUAL_CUM_WINDOW': 3,
+    'RVOL_WINDOW': 20,
+    'ENTRY_Z': 2.0,
+    'EXIT_Z': 1.5,
+    'RVOL_THRESHOLD': 1.5,
+    'MAX_HOLD_DAYS': 14,
+    'MIN_PRICE': 5.0,
+    'MIN_DOLLAR_VOLUME': 10000000.0,
+    'GROSS_EXPOSURE': 1.0,
+    'ANNUALIZATION': 252,
+    'USE_SAME_DAY_VOLUME': False
+}
+
+
+@dataclass
+class Position:
+    side: int
+    entry_date: pd.Timestamp
+    hold_days: int = 0
+
+
+def compute_max_drawdown(equity_curve: pd.Series) -> float:
+    running_max = equity_curve.cummax()
+    drawdown = equity_curve / running_max - 1.0
+    return float(drawdown.min()) if len(drawdown) else 0.0
+
+
+def compute_sharpe(returns: pd.Series, annualization: int = 252) -> float:
+    returns = returns.dropna()
+    if len(returns) < 2:
+        return 0.0
+    vol = returns.std(ddof=1)
+    if vol == 0 or np.isnan(vol):
+        return 0.0
+    return float(np.sqrt(annualization) * returns.mean() / vol)
+
+
+def compute_win_rate(trade_pnls: List[float]) -> float:
+    if not trade_pnls:
+        return 0.0
+    wins = sum(1 for x in trade_pnls if x > 0)
+    return float(wins / len(trade_pnls))
+
+
+def fetch_bars(client: StockHistoricalDataClient, symbols: List[str], start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    req = StockBarsRequest(
+        symbol_or_symbols=symbols,
+        timeframe=CONFIG['TIMEFRAME'],
+        start=start.to_pydatetime(),
+        end=end.to_pydatetime(),
+        adjustment='all',
+        feed='iex'
+    )
+    bars = client.get_stock_bars(req).df
+    if bars.empty:
+        raise ValueError('No market data returned from Alpaca.')
+
+    if isinstance(bars.index, pd.MultiIndex):
+        bars = bars.reset_index()
+    else:
+        bars = bars.reset_index().rename(columns={'index': 'timestamp'})
+
+    bars['timestamp'] = pd.to_datetime(bars['timestamp']).dt.tz_convert(None)
+    return bars
+
+
+def prepare_panel(bars: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    close = bars.pivot(index='timestamp', columns='symbol', values='close').sort_index()
+    volume = bars.pivot(index='timestamp', columns='symbol', values='volume').sort_index()
+    open_ = bars.pivot(index='timestamp', columns='symbol', values='open').sort_index()
+    high = bars.pivot(index='timestamp', columns='symbol', values='high').sort_index()
+    low = bars.pivot(index='timestamp', columns='symbol', values='low').sort_index()
+    vwap = bars.pivot(index='timestamp', columns='symbol', values='vwap').sort_index() if 'vwap' in bars.columns else close.copy()
+    trade_count = bars.pivot(index='timestamp', columns='symbol', values='trade_count').sort_index() if 'trade_count' in bars.columns else volume.copy()
+
+    return {
+        'close': close,
+        'volume': volume,
+        'open': open_,
+        'high': high,
+        'low': low,
+        'vwap': vwap,
+        'trade_count': trade_count
+    }
+
+
+def rolling_residuals(stock_returns: pd.Series, factor_returns: pd.DataFrame, window: int) -> pd.Series:
+    idx = stock_returns.index.intersection(factor_returns.index)
+    y = stock_returns.loc[idx]
+    X = factor_returns.loc[idx]
+    residuals = pd.Series(index=idx, dtype=float)
+
+    for i in range(window, len(idx)):
+        y_win = y.iloc[i - window:i]
+        X_win = X.iloc[i - window:i]
+        valid = y_win.notna() & X_win.notna().all(axis=1)
+        if valid.sum() < max(20, X.shape[1] + 5):
+            continue
+        yv = y_win.loc[valid].values
+        Xv = X_win.loc[valid].values
+        Xv = np.column_stack([np.ones(len(Xv)), Xv])
+        try:
+            beta, _, _, _ = np.linalg.lstsq(Xv, yv, rcond=None)
+        except np.linalg.LinAlgError:
+            continue
+
+        x_t = X.iloc[i]
+        if x_t.isna().any() or pd.isna(y.iloc[i]):
+            continue
+        x_vec = np.concatenate([[1.0], x_t.values])
+        pred = float(np.dot(x_vec, beta))
+        residuals.iloc[i] = float(y.iloc[i] - pred)
+
+    return residuals
+
+
+def build_signals(close: pd.DataFrame, volume: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    returns = close.pct_change()
+
+    factor_symbols = sorted(set([CONFIG['MARKET_ETF']] + list(set(CONFIG['SECTOR_MAP'].values())) + CONFIG['STYLE_FACTORS']))
+    factor_returns = returns[factor_symbols].copy()
+
+    stock_symbols = [s for s in CONFIG['UNIVERSE'] if s in close.columns]
+    residuals = pd.DataFrame(index=close.index, columns=stock_symbols, dtype=float)
+
+    for sym in stock_symbols:
+        sector_etf = CONFIG['SECTOR_MAP'].get(sym)
+        cols = [CONFIG['MARKET_ETF']]
+        if sector_etf and sector_etf in factor_returns.columns:
+            cols.append(sector_etf)
+        cols.extend([f for f in CONFIG['STYLE_FACTORS'] if f in factor_returns.columns])
+        cols = list(dict.fromkeys(cols))
+        residuals[sym] = rolling_residuals(returns[sym], factor_returns[cols], CONFIG['REGRESSION_WINDOW'])
+
+    residual_cum = residuals.rolling(CONFIG['RESIDUAL_CUM_WINDOW']).sum()
+    resid_mean = residual_cum.rolling(CONFIG['ZSCORE_WINDOW']).mean()
+    resid_std = residual_cum.rolling(CONFIG['ZSCORE_WINDOW']).std(ddof=1)
+    zscore = (residual_cum - resid_mean) / resid_std.replace(0, np.nan)
+
+    avg_vol = volume.rolling(CONFIG['RVOL_WINDOW']).mean()
+    if CONFIG['USE_SAME_DAY_VOLUME']:
+        rvol = volume / avg_vol
+    else:
+        rvol = volume.shift(1) / avg_vol.shift(1)
+
+    return returns, residuals, zscore, rvol
+
+
+def sector_neutralize_weights(raw_weights: Dict[str, float], sector_map: Dict[str, str]) -> Dict[str, float]:
+    if not raw_weights:
+        return {}
+
+    weights = pd.Series(raw_weights, dtype=float)
+    sectors = pd.Series({s: sector_map.get(s, 'UNKNOWN') for s in weights.index})
+
+    sector_sums = weights.groupby(sectors).sum()
+    adjusted = weights.copy()
+    for sym in adjusted.index:
+        adjusted.loc[sym] = adjusted.loc[sym] - sector_sums.loc[sectors.loc[sym]] / max((sectors == sectors.loc[sym]).sum(), 1)
+
+    gross = adjusted.abs().sum()
+    if gross > 0:
+        adjusted = adjusted / gross * CONFIG['GROSS_EXPOSURE']
+    else:
+        adjusted[:] = 0.0
+
+    return adjusted.to_dict()
+
+
+def run_backtest(close: pd.DataFrame, volume: pd.DataFrame, returns: pd.DataFrame, zscore: pd.DataFrame, rvol: pd.DataFrame) -> Tuple[pd.DataFrame, List[float]]:
+    stock_symbols = [s for s in CONFIG['UNIVERSE'] if s in close.columns]
+    dates = close.index
+    positions: Dict[str, Position] = {}
+    weights_history = pd.DataFrame(0.0, index=dates, columns=stock_symbols)
+    portfolio_returns = pd.Series(0.0, index=dates, dtype=float)
+    trade_pnls: List[float] = []
+    trade_entry_weights: Dict[str, float] = {}
+    trade_entry_prices: Dict[str, float] = {}
+
+    start_idx = max(CONFIG['WARMUP_BARS'], CONFIG['REGRESSION_WINDOW'] + CONFIG['ZSCORE_WINDOW'] + CONFIG['RESIDUAL_CUM_WINDOW'])
+
+    for i in range(start_idx, len(dates) - 1):
+        dt = dates[i]
+        next_dt = dates[i + 1]
+
+        exit_symbols = []
+        for sym, pos in list(positions.items()):
+            z = zscore.at[dt, sym] if sym in zscore.columns else np.nan
+            pos.hold_days += 1
+            exit_flag = False
+            if pos.side > 0 and pd.notna(z) and z >= -CONFIG['EXIT_Z']:
+                exit_flag = True
+            if pos.side < 0 and pd.notna(z) and z <= CONFIG['EXIT_Z']:
+                exit_flag = True
+            if pos.hold_days >= CONFIG['MAX_HOLD_DAYS']:
+                exit_flag = True
+            if exit_flag:
+                exit_symbols.append(sym)
+
+        for sym in exit_symbols:
+            if sym in positions and sym in trade_entry_prices and sym in trade_entry_weights:
+                entry_price = trade_entry_prices[sym]
+                exit_price = close.at[dt, sym]
+                side = positions[sym].side
+                weight = abs(trade_entry_weights[sym])
+                if pd.notna(entry_price) and pd.notna(exit_price) and entry_price != 0:
+                    pnl = side * (exit_price / entry_price - 1.0) * weight
+                    trade_pnls.append(float(pnl))
+                trade_entry_prices.pop(sym, None)
+                trade_entry_weights.pop(sym, None)
+            positions.pop(sym, None)
+
+        candidates_long = []
+        candidates_short = []
+        for sym in stock_symbols:
+            px = close.at[dt, sym]
+            vol_today = volume.at[dt, sym]
+            z = zscore.at[dt, sym]
+            rv = rvol.at[dt, sym]
+            if pd.isna(px) or pd.isna(vol_today) or pd.isna(z) or pd.isna(rv):
+                continue
+            dollar_vol = px * vol_today
+            if px < CONFIG['MIN_PRICE'] or dollar_vol < CONFIG['MIN_DOLLAR_VOLUME']:
+                continue
+            if sym in positions:
+                continue
+            if z <= -CONFIG['ENTRY_Z'] and rv >= CONFIG['RVOL_THRESHOLD']:
+                candidates_long.append(sym)
+            elif z >= CONFIG['ENTRY_Z'] and rv >= CONFIG['RVOL_THRESHOLD']:
+                candidates_short.append(sym)
+
+        raw_weights = {}
+        if candidates_long:
+            w = 0.5 / len(candidates_long)
+            for sym in candidates_long:
+                raw_weights[sym] = raw_weights.get(sym, 0.0) + w
+        if candidates_short:
+            w = -0.5 / len(candidates_short)
+            for sym in candidates_short:
+                raw_weights[sym] = raw_weights.get(sym, 0.0) + w
+
+        target_new_weights = sector_neutralize_weights(raw_weights, CONFIG['SECTOR_MAP'])
+
+        for sym, w in target_new_weights.items():
+            if abs(w) > 0 and sym not in positions:
+                side = 1 if w > 0 else -1
+                positions[sym] = Position(side=side, entry_date=dt, hold_days=0)
+                trade_entry_weights[sym] = float(w)
+                trade_entry_prices[sym] = float(close.at[next_dt, sym]) if pd.notna(close.at[next_dt, sym]) else float(close.at[dt, sym])
+
+        current_weights = {sym: 0.0 for sym in stock_symbols}
+        for sym, pos in positions.items():
+            if sym in trade_entry_weights:
+                current_weights[sym] = trade_entry_weights[sym]
+
+        gross = sum(abs(v) for v in current_weights.values())
+        if gross > 0:
+            scale = CONFIG['GROSS_EXPOSURE'] / gross
+            for sym in current_weights:
+                current_weights[sym] *= scale
+
+        for sym in stock_symbols:
+            weights_history.at[next_dt, sym] = current_weights.get(sym, 0.0)
+
+        next_rets = returns.loc[next_dt, stock_symbols].fillna(0.0)
+        w_vec = weights_history.loc[next_dt, stock_symbols].fillna(0.0)
+        portfolio_returns.at[next_dt] = float((w_vec * next_rets).sum())
+
+    equity_curve = (1.0 + portfolio_returns.fillna(0.0)).cumprod()
+    results = pd.DataFrame({
+        'portfolio_return': portfolio_returns.fillna(0.0),
+        'equity_curve': equity_curve
+    })
+    return results, trade_pnls
+
+
+def main():
+    client = StockHistoricalDataClient(API_KEY, API_SECRET)
+
+    all_symbols = sorted(set(CONFIG['UNIVERSE'] + [CONFIG['MARKET_ETF']] + list(set(CONFIG['SECTOR_MAP'].values())) + CONFIG['STYLE_FACTORS']))
+
+    end = pd.Timestamp.utcnow().normalize()
+    total_days = CONFIG['LOOKBACK_DAYS'] + CONFIG['WARMUP_BARS'] + CONFIG['REGRESSION_WINDOW'] + CONFIG['ZSCORE_WINDOW'] + 30
+    start = end - pd.Timedelta(days=total_days * 2)
+
+    bars = fetch_bars(client, all_symbols, start, end)
+    panel = prepare_panel(bars)
+    close = panel['close']
+    volume = panel['volume']
+
+    valid_dates = close.dropna(how='all').index
+    if len(valid_dates) < CONFIG['LOOKBACK_DAYS']:
+        raise ValueError('Insufficient history returned for requested lookback.')
+
+    close = close.loc[valid_dates]
+    volume = volume.reindex(close.index)
+
+    returns, residuals, zscore, rvol = build_signals(close, volume)
+    results, trade_pnls = run_backtest(close, volume, returns, zscore, rvol)
+
+    results = results.iloc[-CONFIG['LOOKBACK_DAYS']:].copy()
+
+    total_return = float(results['equity_curve'].iloc[-1] - 1.0) if len(results) else 0.0
+    max_dd = compute_max_drawdown(results['equity_curve']) if len(results) else 0.0
+    sharpe = compute_sharpe(results['portfolio_return'], CONFIG['ANNUALIZATION']) if len(results) else 0.0
+    win_rate = compute_win_rate(trade_pnls)
+
+    print('Backtest Summary')
+    print('================')
+    print(f"Start Date: {results.index.min().date() if len(results) else 'N/A'}")
+    print(f"End Date:   {results.index.max().date() if len(results) else 'N/A'}")
+    print(f'Total Return: {total_return:.2%}')
+    print(f'Max Drawdown: {max_dd:.2%}')
+    print(f'Sharpe Ratio: {sharpe:.2f}')
+    print(f'Win Rate:     {win_rate:.2%}')
+    print(f'Number Trades: {len(trade_pnls)}')
+    print('')
+    print('Last 10 equity curve points:')
+    print(results.tail(10).to_string())
+
+
+if __name__ == '__main__':
+    main()
