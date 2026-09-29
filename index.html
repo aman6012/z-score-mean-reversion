@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RIVET — Quant Strategy Console</title>
+    <meta name="description" content="A monitoring dashboard for a factor-neutral mean-reversion strategy." />
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+      :root {
+        --ink: #16231f;
+        --muted: #7a8580;
+        --canvas: #f4f5f1;
+        --panel: #ffffff;
+        --line: #e5e8e3;
+        --green: #136f4a;
+        --green-light: #e7f3ea;
+        --red: #c64b3b;
+        --red-light: #fceceb;
+        --lime: #c7ed63;
+        --amber: #f3bb4e;
+        --shadow: 0 15px 40px rgba(23, 39, 31, .055);
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--canvas); color: var(--ink); font-family: Manrope, sans-serif; font-size: 14px; }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+      .app { min-height: 100vh; display: grid; grid-template-columns: 236px 1fr; }
+      .sidebar { background: #17342a; color: #e9f1eb; padding: 28px 16px; display: flex; flex-direction: column; gap: 32px; }
+      .brand { display: flex; align-items: center; padding: 0 10px; gap: 11px; font-weight: 800; letter-spacing: .06em; font-size: 17px; }
+      .brand-mark { width: 28px; height: 28px; border-radius: 9px; background: var(--lime); color: #17342a; display: grid; place-items: center; font-family: Georgia, serif; font-size: 20px; transform: rotate(-8deg); }
+      .strategy-chip { margin: -14px 8px 0; padding: 13px 12px; border-radius: 10px; background: rgba(255,255,255,.075); border: 1px solid rgba(255,255,255,.08); }
+      .strategy-chip small, .side-label { color: #9eb1a8; display: block; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+      .strategy-chip strong { display: block; margin-top: 5px; font-size: 12px; color: white; }
+      nav { display: grid; gap: 5px; }
+      .side-label { padding: 0 11px 8px; }
+      .nav-item { border: 0; background: transparent; color: #b8c9c0; text-align: left; border-radius: 8px; padding: 11px 12px; display: flex; align-items: center; gap: 11px; font-weight: 600; }
+      .nav-item svg { width: 17px; height: 17px; opacity: .85; }
+      .nav-item.active, .nav-item:hover { background: rgba(199,237,99,.14); color: #effad3; }
+      .sidebar-footer { margin-top: auto; border-top: 1px solid rgba(255,255,255,.12); padding: 18px 10px 0; display: flex; gap: 9px; align-items: center; color: #a9bbb1; font-size: 11px; }
+      .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 0 4px rgba(199,237,99,.12); }
+      main { padding: 28px 36px 44px; max-width: 1600px; width: 100%; margin: auto; overflow: hidden; }
+      .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 31px; }
+      .eyebrow { font: 11px 'DM Mono', monospace; color: var(--green); letter-spacing: .08em; text-transform: uppercase; }
+      h1 { margin: 5px 0 0; font-size: 29px; letter-spacing: -.045em; line-height: 1.16; }
+      .top-actions { display: flex; align-items: center; gap: 11px; }
+      .date { color: var(--muted); font: 11px 'DM Mono', monospace; margin-right: 8px; }
+      .icon-button, .run-button { height: 37px; border-radius: 8px; border: 1px solid var(--line); background: white; color: var(--ink); padding: 0 12px; display: flex; gap: 8px; align-items: center; font-weight: 700; font-size: 12px; }
+      .icon-button svg { width: 15px; }
+      .run-button { border: 0; background: var(--green); color: white; padding: 0 16px; box-shadow: 0 6px 15px rgba(19,111,74,.18); }
+      .run-button:hover { background: #0b5b3b; }
+      .run-button.running { background: #497d69; pointer-events: none; }
+      .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 17px; }
+      .metric-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 19px 20px; min-height: 130px; box-shadow: 0 3px 8px rgba(26,44,35,.02); }
+      .metric-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .045em; text-transform: uppercase; }
+      .metric-value { font: 28px 'DM Mono', monospace; letter-spacing: -.07em; margin: 15px 0 9px; }
+      .metric-detail { font: 11px 'DM Mono', monospace; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+      .up { color: var(--green); } .down { color: var(--red); }
+      .metric-spark { height: 29px; margin-top: 8px; }
+      .content-grid { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(300px, .8fr); gap: 17px; }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+      .card-head { padding: 19px 21px 0; display: flex; align-items: flex-start; justify-content: space-between; }
+      .card-title { font-size: 14px; font-weight: 800; letter-spacing: -.025em; }
+      .card-subtitle { font: 10px 'DM Mono', monospace; color: var(--muted); margin-top: 5px; }
+      .periods { display: flex; background: #f4f6f2; padding: 3px; gap: 1px; border-radius: 7px; }
+      .period { font: 10px 'DM Mono', monospace; color: #77837d; border: 0; background: transparent; padding: 5px 7px; border-radius: 5px; }
+      .period.active { color: var(--ink); background: white; box-shadow: 0 1px 3px rgba(0,0,0,.09); }
+      .chart-wrap { padding: 9px 18px 17px; height: 286px; position: relative; }
+      .chart-tooltip { position: absolute; padding: 7px 9px; background: #1e332a; color: white; font: 10px 'DM Mono', monospace; border-radius: 5px; right: 20%; top: 25px; }
+      .chart-tooltip span { display:block; color:#b8d4bd; margin-bottom: 3px; }
+      .equity-chart { width: 100%; height: 100%; overflow: visible; }
+      .chart-grid { stroke: #edf0eb; stroke-width: 1; }
+      .chart-axis { fill: #97a19b; font: 9px 'DM Mono', monospace; }
+      .stat-list { padding: 13px 20px 16px; }
+      .stat-row { display:flex; justify-content:space-between; align-items:center; padding: 11px 0; border-bottom: 1px solid #edf0ec; }
+      .stat-row:last-child { border: 0; }
+      .stat-name { color: #607069; font-size: 12px; }
+      .stat-value { font: 12px 'DM Mono', monospace; font-weight: 500; }
+      .exposure { padding: 24px 21px 18px; }
+      .exposure-top { display:flex; justify-content:space-between; align-items:baseline; }
+      .exposure-value { font: 21px 'DM Mono', monospace; letter-spacing:-.05em; }
+      .progress { height: 8px; background:#edf1ed; border-radius:10px; overflow:hidden; margin: 17px 0 13px; display:flex; }
+      .longbar { background: var(--green); width: 50%; } .shortbar { background: var(--red); width: 50%; }
+      .exposure-detail { display:flex; justify-content:space-between; color:var(--muted); font: 10px 'DM Mono', monospace; }
+      .signal-card { margin-top:17px; }
+      .signal-summary { margin: 14px 21px 7px; background:#f5f8ef; border:1px solid #e8edda; padding: 11px 12px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; }
+      .signal-summary span { color:#677768; font-size:11px; } .signal-summary strong { font: 12px 'DM Mono', monospace; }
+      .signal-list { padding: 0 21px 16px; }
+      .signal-row { display:grid; grid-template-columns: 40px 1fr auto; align-items:center; gap:10px; padding: 12px 0; border-bottom: 1px solid #edf0eb; }
+      .signal-row:last-child { border-bottom:0; }
+      .ticker { font: 12px 'DM Mono', monospace; font-weight: 500; }
+      .company { font-size:11px; color:var(--muted); margin-top:3px; }
+      .signal-badge { font: 10px 'DM Mono', monospace; font-weight:500; padding: 4px 6px; border-radius:4px; }
+      .buy { background:var(--green-light); color:var(--green); } .sell { background:var(--red-light); color:var(--red); }
+      .positions-card { margin-top:17px; }
+      .table-wrap { overflow-x:auto; padding: 9px 20px 16px; }
+      table { width:100%; border-collapse:collapse; white-space:nowrap; }
+      th { text-align:left; color:#8a9590; font: 10px 'DM Mono', monospace; text-transform:uppercase; letter-spacing:.04em; padding: 9px 0; border-bottom: 1px solid var(--line); }
+      td { padding: 13px 0; font: 12px 'DM Mono', monospace; border-bottom:1px solid #eef0ed; }
+      tr:last-child td { border:0; }
+      .position-name { font:700 12px Manrope, sans-serif; } .position-sector { font-size:10px; color:var(--muted); margin-top:2px; }
+      .weight-cell { font-weight:500; }
+      .settings-card { padding-bottom: 13px; }
+      .setting-group { padding:14px 21px 5px; }
+      .setting-label { display:flex; justify-content:space-between; color:#63716a; font-size:11px; margin-bottom:8px; }
+      .setting-label output { color:var(--ink); font: 11px 'DM Mono', monospace; }
+      input[type=range] { appearance:none; width:100%; height:4px; border-radius:5px; background:linear-gradient(90deg,var(--green) 45%,#e6ebe6 45%); outline:none; }
+      input[type=range]::-webkit-slider-thumb { appearance:none; height:14px; width:14px; border-radius:50%; background:white; border:2px solid var(--green); box-shadow:0 1px 3px rgba(0,0,0,.17); }
+      .settings-note { margin:12px 21px 0; padding-top:13px; border-top:1px solid var(--line); font:10px 'DM Mono', monospace; color:#84908a; line-height:1.55; }
+      .toast { position:fixed; right:28px; bottom:25px; background:#17342a; color:white; padding:12px 15px; border-radius:8px; font-size:12px; box-shadow:0 10px 30px rgba(0,0,0,.18); transform:translateY(100px); opacity:0; transition:.28s ease; }
+      .toast.show { transform:translateY(0); opacity:1; }
+      .mobile-nav { display:none; }
+      @media (max-width: 1050px) { .metrics {grid-template-columns:repeat(2,1fr)} .content-grid {grid-template-columns:1fr} .sidebar {width:210px} .app {grid-template-columns:210px 1fr} }
+      @media (max-width: 700px) { .app { display:block; } .sidebar {display:none} main {padding:20px 16px 78px} .topbar {align-items:flex-start; gap:14px} h1 {font-size:23px} .top-actions .date,.icon-button {display:none} .metrics {gap:10px} .metric-card {padding:15px; min-height:112px} .metric-value {font-size:22px; margin:13px 0 6px} .content-grid {gap:10px} .card-head {padding:16px 16px 0} .chart-wrap {height:240px; padding:6px 10px 13px} .table-wrap {padding:8px 16px 13px} .mobile-nav { position:fixed; bottom:0; left:0; right:0; z-index:5; display:flex; justify-content:space-around; background:#17342a; padding:9px 8px 12px; box-shadow:0 -5px 20px rgba(0,0,0,.15); } .mobile-nav button {background:transparent; border:0; color:#a9bbb1; font-size:9px; display:grid; gap:3px; place-items:center} .mobile-nav svg{width:18px;height:18px} .mobile-nav button:first-child{color:var(--lime)} }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark">R</span> RIVET</div>
+        <div class="strategy-chip"><small>Active strategy</small><strong>Factor Mean Reversion</strong></div>
+        <nav>
+          <span class="side-label">Workspace</span>
+          <button class="nav-item active" data-label="Overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Overview</button>
+          <button class="nav-item" data-label="Live signals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-8 4 16 3-8h5"/></svg>Live signals</button>
+          <button class="nav-item" data-label="Portfolio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10m8 10V4m8 16v-7"/></svg>Portfolio</button>
+          <button class="nav-item" data-label="Backtests"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 15 3-4 3 2 5-7"/></svg>Backtests</button>
+        </nav>
+        <nav>
+          <span class="side-label">System</span>
+          <button class="nav-item" data-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.04 1.56v.08h-3v-.08A1.7 1.7 0 0 0 10.66 18.7a1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15.04a1.7 1.7 0 0 0-1.56-1.04h-.08v-3h.08A1.7 1.7 0 0 0 7 9.96a1.7 1.7 0 0 0-.34-1.88L6.6 8.02 8.72 5.9l.06.06a1.7 1.7 0 0 0 1.88.34h.01a1.7 1.7 0 0 0 1.03-1.56v-.08h3v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06A1.7 1.7 0 0 0 19.4 10a1.7 1.7 0 0 0 1.56 1.04h.08v3h-.08A1.7 1.7 0 0 0 19.4 15z"/></svg>Settings</button>
+        </nav>
+        <div class="sidebar-footer"><span class="live-dot"></span> Alpaca data connection live</div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div><div class="eyebrow">Strategy monitor / US equities</div><h1>Good morning, Alex.</h1></div>
+          <div class="top-actions"><span class="date">MARKET CLOSED · SEP 27, 2024</span><button class="icon-button" id="export-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 20h16"/></svg>Export</button><button class="run-button" id="run-btn"><span>Run backtest</span><span>→</span></button></div>
+        </header>
+
+        <section class="metrics">
+          <article class="metric-card"><div class="metric-label">Portfolio value</div><div class="metric-value">$124,680</div><div class="metric-detail up">↑ 2.84% <span>this month</span></div></article>
+          <article class="metric-card"><div class="metric-label">Total return</div><div class="metric-value up">+24.68%</div><svg class="metric-spark" viewBox="0 0 160 30" preserveAspectRatio="none"><path d="M0 24 L12 23 L23 25 L34 19 L46 21 L58 15 L69 17 L80 12 L92 16 L103 9 L115 13 L126 7 L138 9 L150 3 L160 5" fill="none" stroke="#136f4a" stroke-width="2"/><path d="M0 28H160" stroke="#e8ede8"/></svg></article>
+          <article class="metric-card"><div class="metric-label">Sharpe ratio</div><div class="metric-value">1.82</div><div class="metric-detail up">↑ 0.14 <span>vs. last run</span></div></article>
+          <article class="metric-card"><div class="metric-label">Max drawdown</div><div class="metric-value down">−8.42%</div><div class="metric-detail"><span>within 10% limit</span></div></article>
+        </section>
+
+        <section class="content-grid">
+          <div>
+            <article class="card">
+              <div class="card-head"><div><div class="card-title">Equity curve</div><div class="card-subtitle">FACTOR-NEUTRAL MEAN REVERSION · 365 TRADING DAYS</div></div><div class="periods"><button class="period">1M</button><button class="period">3M</button><button class="period active">1Y</button><button class="period">ALL</button></div></div>
+              <div class="chart-wrap">
+                <div class="chart-tooltip"><span>SEP 27, 2024</span>$124,680 <b class="up">+24.68%</b></div>
+                <svg class="equity-chart" viewBox="0 0 760 230" preserveAspectRatio="none" aria-label="Portfolio equity curve">
+                  <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#72b890" stop-opacity=".3"/><stop offset="1" stop-color="#72b890" stop-opacity="0"/></linearGradient></defs>
+                  <line class="chart-grid" x1="0" y1="26" x2="720" y2="26"/><line class="chart-grid" x1="0" y1="75" x2="720" y2="75"/><line class="chart-grid" x1="0" y1="124" x2="720" y2="124"/><line class="chart-grid" x1="0" y1="173" x2="720" y2="173"/>
+                  <text class="chart-axis" x="726" y="29">$125k</text><text class="chart-axis" x="726" y="78">$115k</text><text class="chart-axis" x="726" y="127">$105k</text><text class="chart-axis" x="726" y="176">$95k</text>
+                  <path d="M0 187 L21 181 L42 186 L63 164 L84 171 L105 145 L126 153 L147 136 L168 143 L189 126 L210 140 L231 120 L252 128 L273 108 L294 118 L315 104 L336 113 L357 92 L378 104 L399 84 L420 91 L441 70 L462 79 L483 91 L504 68 L525 76 L546 57 L567 65 L588 48 L609 59 L630 39 L651 47 L672 34 L693 43 L714 23 L714 205 L0 205 Z" fill="url(#area)"/>
+                  <path d="M0 187 L21 181 L42 186 L63 164 L84 171 L105 145 L126 153 L147 136 L168 143 L189 126 L210 140 L231 120 L252 128 L273 108 L294 118 L315 104 L336 113 L357 92 L378 104 L399 84 L420 91 L441 70 L462 79 L483 91 L504 68 L525 76 L546 57 L567 65 L588 48 L609 59 L630 39 L651 47 L672 34 L693 43 L714 23" fill="none" stroke="#136f4a" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
+                  <line x1="714" y1="23" x2="714" y2="205" stroke="#136f4a" stroke-width="1" stroke-dasharray="3 3" opacity=".45"/><circle cx="714" cy="23" r="4" fill="white" stroke="#136f4a" stroke-width="2"/>
+                  <text class="chart-axis" x="0" y="221">OCT '23</text><text class="chart-axis" x="167" y="221">JAN '24</text><text class="chart-axis" x="343" y="221">APR '24</text><text class="chart-axis" x="518" y="221">JUL '24</text><text class="chart-axis" x="676" y="221">SEP '24</text>
+                </svg>
+              </div>
+            </article>
+            <article class="card positions-card">
+              <div class="card-head"><div><div class="card-title">Open positions</div><div class="card-subtitle">SECTOR-NEUTRAL WEIGHTS · NEXT SESSION EXECUTION</div></div><button class="period" id="all-positions">VIEW ALL →</button></div>
+              <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Side</th><th>Weight</th><th>Entry</th><th>Hold</th><th>Unrealized P&L</th></tr></thead><tbody>
+                <tr><td><div class="position-name">NVDA</div><div class="position-sector">Technology · XLK</div></td><td><span class="signal-badge sell">SHORT</span></td><td class="weight-cell">−8.33%</td><td>$121.40</td><td>4d</td><td class="up">+$186.42</td></tr>
+                <tr><td><div class="position-name">JPM</div><div class="position-sector">Financials · XLF</div></td><td><span class="signal-badge buy">LONG</span></td><td class="weight-cell">+8.33%</td><td>$211.72</td><td>3d</td><td class="up">+$94.10</td></tr>
+                <tr><td><div class="position-name">XOM</div><div class="position-sector">Energy · XLE</div></td><td><span class="signal-badge sell">SHORT</span></td><td class="weight-cell">−8.33%</td><td>$117.68</td><td>2d</td><td class="down">−$42.88</td></tr>
+              </tbody></table></div>
+            </article>
+          </div>
+          <div>
+            <article class="card"><div class="card-head"><div><div class="card-title">Backtest diagnostics</div><div class="card-subtitle">LAST COMPLETED RUN</div></div><span class="signal-badge buy">PASSED</span></div><div class="stat-list"><div class="stat-row"><span class="stat-name">Win rate</span><span class="stat-value">57.8%</span></div><div class="stat-row"><span class="stat-name">Number of trades</span><span class="stat-value">184</span></div><div class="stat-row"><span class="stat-name">Average holding time</span><span class="stat-value">6.4 days</span></div><div class="stat-row"><span class="stat-name">Profit factor</span><span class="stat-value">1.61</span></div></div><div class="exposure"><div class="exposure-top"><span class="metric-label">Gross exposure</span><span class="exposure-value">100.0%</span></div><div class="progress"><span class="longbar"></span><span class="shortbar"></span></div><div class="exposure-detail"><span><i class="up">●</i> LONG 50.0%</span><span><i class="down">●</i> SHORT 50.0%</span></div></div></article>
+            <article class="card signal-card"><div class="card-head"><div><div class="card-title">Signal queue</div><div class="card-subtitle">TODAY'S QUALIFYING CANDIDATES</div></div><button class="period">REFRESH</button></div><div class="signal-summary"><span>Active entries</span><strong>06 / 68 UNIVERSE</strong></div><div class="signal-list"><div class="signal-row"><div class="ticker">AMD</div><div><div class="company">Z-score −2.41 · RVOL 1.84×</div></div><span class="signal-badge buy">BUY</span></div><div class="signal-row"><div class="ticker">LLY</div><div><div class="company">Z-score +2.31 · RVOL 2.02×</div></div><span class="signal-badge sell">SELL</span></div><div class="signal-row"><div class="ticker">CAT</div><div><div class="company">Z-score −2.18 · RVOL 1.68×</div></div><span class="signal-badge buy">BUY</span></div><div class="signal-row"><div class="ticker">META</div><div><div class="company">Z-score +2.12 · RVOL 1.73×</div></div><span class="signal-badge sell">SELL</span></div></div></article>
+            <article class="card signal-card settings-card"><div class="card-head"><div><div class="card-title">Strategy controls</div><div class="card-subtitle">CURRENT RUN CONFIGURATION</div></div></div><div class="setting-group"><label class="setting-label" for="entry-z">Entry z-score <output id="entry-z-value">2.0σ</output></label><input id="entry-z" type="range" min="1" max="3" step="0.1" value="2" /></div><div class="setting-group"><label class="setting-label" for="hold-days">Maximum hold <output id="hold-days-value">14 days</output></label><input id="hold-days" type="range" min="5" max="30" step="1" value="14" /></div><div class="settings-note">The algo regresses each stock against market, sector, and style factors before trading residual dislocations.</div></article>
+          </div>
+        </section>
+      </main>
+      <div class="mobile-nav"><button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/></svg>Overview</button><button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-8 4 16 3-8h5"/></svg>Signals</button><button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10m8 10V4m8 16v-7"/></svg>Portfolio</button></div>
+    </div>
+    <div class="toast" id="toast">Backtest has been queued.</div>
+    <script>
+      const toast = document.getElementById('toast');
+      const notify = (message) => { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2800); };
+      document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => { document.querySelector('.nav-item.active').classList.remove('active'); item.classList.add('active'); notify(item.dataset.label + ' workspace selected'); }));
+      document.querySelectorAll('.period').forEach(button => button.addEventListener('click', () => { if (button.parentElement.classList.contains('periods')) { button.parentElement.querySelector('.active').classList.remove('active'); button.classList.add('active'); notify('Equity curve updated to ' + button.textContent); } }));
+      document.getElementById('entry-z').addEventListener('input', e => { document.getElementById('entry-z-value').textContent = Number(e.target.value).toFixed(1) + 'σ'; e.target.style.background = `linear-gradient(90deg, var(--green) ${(e.target.value - 1) * 50}%, #e6ebe6 ${(e.target.value - 1) * 50}%)`; });
+      document.getElementById('hold-days').addEventListener('input', e => { document.getElementById('hold-days-value').textContent = e.target.value + ' days'; e.target.style.background = `linear-gradient(90deg, var(--green) ${((e.target.value - 5) / 25) * 100}%, #e6ebe6 ${((e.target.value - 5) / 25) * 100}%)`; });
+      document.getElementById('run-btn').addEventListener('click', e => { const button = e.currentTarget; button.classList.add('running'); button.querySelector('span').textContent = 'Running…'; setTimeout(() => { button.classList.remove('running'); button.querySelector('span').textContent = 'Run backtest'; notify('Backtest complete — metrics refreshed.'); }, 1400); });
+      document.getElementById('export-btn').addEventListener('click', () => notify('Performance report exported as CSV.'));
+      document.getElementById('all-positions').addEventListener('click', () => notify('Showing all open positions.'));
+    </script>
+  </body>
+</html>
